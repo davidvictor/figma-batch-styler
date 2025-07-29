@@ -18,7 +18,7 @@ import {
 
 // This shows the HTML page in "ui.html".
 figma.showUI(__html__, {
-  width: 400,
+  width: 540,
   height: 780,
 });
 
@@ -59,17 +59,47 @@ async function sendStyles({ figmaTextStyles = [], figmaColorStyles = [] }) {
     } else {
       letterSpacing = Math.round(s.letterSpacing.value * 100) / 100;
     }
-    return { name, description, fontName, fontSize, lineHeight, letterSpacing, id };
+    return {
+      name,
+      description,
+      fontName,
+      fontSize,
+      lineHeight,
+      letterSpacing,
+      id,
+    };
   });
 
   let availableFonts = await figma.listAvailableFontsAsync();
+
+  // Fetch available variables
+  let variables = [];
+  try {
+    const collections =
+      await figma.variables.getLocalVariableCollectionsAsync();
+    const allVariables = await figma.variables.getLocalVariablesAsync();
+
+    variables = allVariables.map((variable) => ({
+      id: variable.id,
+      name: variable.name,
+      resolvedType: variable.resolvedType,
+      valuesByMode: variable.valuesByMode,
+      collectionId: variable.variableCollectionId,
+      collectionName:
+        collections.find((c) => c.id === variable.variableCollectionId)?.name ||
+        "",
+    }));
+  } catch (error) {
+    console.error("Error fetching variables:", error);
+  }
+
   figma.ui.postMessage({
     type: "postStyles",
     textStyles,
     colorStyles,
     availableFonts,
+    variables,
   });
-  trackEvent([{ event_type: "received_styles" }]);
 }
 
 function getStyles() {
@@ -83,7 +113,7 @@ function getStyles() {
   return;
 }
 
-function updateTextStyles({
+async function updateTextStyles({
   selectedStyles,
   styleName,
   styleMatch,
@@ -94,68 +124,138 @@ function updateTextStyles({
   lineHeight,
   letterSpacing,
   fontMappings,
+  variableBindings,
 }) {
   let localStyles = figma.getLocalTextStyles();
 
   return selectedStyles.map(async (selectedStyle, idx) => {
+    let hit = localStyles.find((s) => s.id === selectedStyle.id);
+
+    // Handle variable bindings
+    if (variableBindings) {
+      for (const [field, variableId] of Object.entries(variableBindings)) {
+        if (variableId) {
+          try {
+            const variable =
+              await figma.variables.getVariableByIdAsync(variableId);
+            if (
+              (field === "fontWeight" || field === "fontFamily") &&
+              variable &&
+              variable.resolvedType === "STRING"
+            ) {
+              // For font weight and family, bind STRING variables
+              hit.setBoundVariable(field, variable);
+            } else if (variable && variable.resolvedType === "FLOAT") {
+              hit.setBoundVariable(field, variable);
+            }
+          } catch (error) {
+            console.error(`Error binding variable to ${field}:`, error);
+          }
+        }
+      }
+    }
+
+    // Handle direct values (existing logic)
     let newLineHeight;
     let newLetterSpacing;
     let newFontSize;
-    if (lineHeight) {
-      newLineHeight = convertLineHeightToFigma(
-        fillToLengthOfSelected(lineHeight, selectedStyles)[idx]
-      );
-    }
-    if (letterSpacing) {
-      newLetterSpacing = convertLetterSpacingToFigma(
-        fillToLengthOfSelected(letterSpacing, selectedStyles)[idx]
+
+    // Only apply direct values if no variable is bound
+    if (!variableBindings?.fontSize && fontSize) {
+      newFontSize = Number(
+        fillToLengthOfSelected(fontSize, selectedStyles)[idx],
       );
     }
 
-    if (fontSize) {
-      newFontSize = Number(
-        fillToLengthOfSelected(fontSize, selectedStyles)[idx]
+    if (!variableBindings?.lineHeight && lineHeight) {
+      newLineHeight = convertLineHeightToFigma(
+        fillToLengthOfSelected(lineHeight, selectedStyles)[idx],
       );
     }
+
+    if (!variableBindings?.letterSpacing && letterSpacing) {
+      newLetterSpacing = convertLetterSpacingToFigma(
+        fillToLengthOfSelected(letterSpacing, selectedStyles)[idx],
+      );
+    }
+
     let style;
-    if (fontMappings) {
-      let hit = fontMappings.find(
-        (mapping) => mapping.currentWeight === selectedStyle.fontName.style
-      );
-      style = hit.newWeight;
+    if (!variableBindings?.fontWeight) {
+      if (fontMappings) {
+        let mapping = fontMappings.find(
+          (mapping) => mapping.currentWeight === selectedStyle.fontName.style,
+        );
+        style = mapping.newWeight;
+      } else {
+        style = fontWeight ? fontWeight : selectedStyle.fontName.style;
+      }
     } else {
-      style = fontWeight ? fontWeight : selectedStyle.fontName.style;
+      // When using variable for weight, keep the current style for loading
+      style = selectedStyle.fontName.style;
     }
-    let family = familyName ? familyName : selectedStyle.fontName.family;
-    let size = newFontSize ? newFontSize : selectedStyle.fontSize;
-    let lh = newLineHeight
-      ? newLineHeight
-      : convertLineHeightToFigma(selectedStyle.lineHeight);
-    let ls = newLetterSpacing
-      ? newLetterSpacing
-      : convertLetterSpacingToFigma(selectedStyle.letterSpacing);
-    let hit = localStyles.find((s) => s.id === selectedStyle.id);
+    let family =
+      !variableBindings?.fontFamily && familyName
+        ? familyName
+        : selectedStyle.fontName.family;
 
     await figma.loadFontAsync({ family, style });
+
     if (styleMatch !== null && styleName !== undefined) {
       hit.name = hit.name.replace(styleMatch, styleName);
     } else if (styleName) {
       hit.name = styleName;
     }
-    if(description !== null) {
-      hit.description = description
+    if (description !== null) {
+      hit.description = description;
     }
-    hit.fontName = {
-      family,
-      style,
-    };
-    hit.fontSize = size;
-    hit.lineHeight = {
-      ...lh,
-    };
-    hit.letterSpacing = {
-      ...ls,
-    };
+
+    // Only set fontName if not using variables for weight or family
+    if (!variableBindings?.fontWeight && !variableBindings?.fontFamily) {
+      hit.fontName = {
+        family,
+        style,
+      };
+    } else if (
+      !variableBindings?.fontFamily &&
+      familyName &&
+      familyName !== selectedStyle.fontName.family
+    ) {
+      // If only family changed (not using variable), update just the family
+      hit.fontName = {
+        family,
+        style: variableBindings?.fontWeight
+          ? selectedStyle.fontName.style
+          : style,
+      };
+    } else if (!variableBindings?.fontWeight && variableBindings?.fontFamily) {
+      // If using variable for family but not weight, only update style if changed
+      if (style !== selectedStyle.fontName.style) {
+        hit.fontName = {
+          family: selectedStyle.fontName.family,
+          style,
+        };
+      }
+    }
+
+    // Only set direct values if no variable is bound
+    if (!variableBindings?.fontSize && newFontSize) {
+      hit.fontSize = newFontSize;
+    } else if (!variableBindings?.fontSize) {
+      hit.fontSize = selectedStyle.fontSize;
+    }
+
+    if (!variableBindings?.lineHeight) {
+      hit.lineHeight = newLineHeight
+        ? { ...newLineHeight }
+        : { ...convertLineHeightToFigma(selectedStyle.lineHeight) };
+    }
+
+    if (!variableBindings?.letterSpacing) {
+      hit.letterSpacing = newLetterSpacing
+        ? { ...newLetterSpacing }
+        : { ...convertLetterSpacingToFigma(selectedStyle.letterSpacing) };
+    }
+
     return hit;
   });
 }
@@ -197,13 +297,13 @@ function fillToLengthOfSelected(property, styles) {
     .fill(
       String(property)
         .split(",")
-        .map((i) => i.trim())
+        .map((i) => i.trim()),
     )
     .flat()
     .slice(0, styles.length);
 }
 
-function updateColorStyles({
+async function updateColorStyles({
   selectedStyles,
   styleName,
   styleMatch,
@@ -213,56 +313,78 @@ function updateColorStyles({
   lightness,
   alpha,
   hex,
+  useColorVariable,
+  colorVariableId,
 }) {
   let localStyles = figma.getLocalPaintStyles();
 
   return selectedStyles.map(async (selectedStyle, idx) => {
-    let { h, s, l } = getHslFromStyle(selectedStyle);
-    let newHue =
-      hue == undefined
-        ? h
-        : Number(fillToLengthOfSelected(hue, selectedStyles)[idx]);
-    let newSaturation =
-      saturation == undefined
-        ? s
-        : Number(fillToLengthOfSelected(saturation, selectedStyles)[idx]);
-    let newLightness =
-      lightness == undefined
-        ? l
-        : Number(fillToLengthOfSelected(lightness, selectedStyles)[idx]);
-    let newColor;
-    if (hex) {
-      newColor = hexToFigmaRGB(
-        fillToLengthOfSelected(hex, selectedStyles)[idx]
-      );
-    } else {
-      newColor = convertToRgb({
-        h: newHue,
-        s: newSaturation,
-        l: newLightness,
-      });
-    }
-    let opacity = alpha
-      ? Number(fillToLengthOfSelected(alpha, selectedStyles)[idx])
-      : selectedStyle.paints[0].opacity;
     let hit = localStyles.find((s) => s.id === selectedStyle.id);
-    hit.paints = [{ color: newColor, type: "SOLID", opacity }];
+
+    if (useColorVariable && colorVariableId) {
+      // Bind to variable
+      try {
+        const variable =
+          await figma.variables.getVariableByIdAsync(colorVariableId);
+        if (variable && variable.resolvedType === "COLOR") {
+          const currentPaint = hit.paints[0];
+          const opacity = alpha
+            ? Number(fillToLengthOfSelected(alpha, selectedStyles)[idx])
+            : currentPaint.opacity;
+
+          // Create a new paint bound to the variable
+          const newPaint = figma.variables.setBoundVariableForPaint(
+            { type: "SOLID", color: { r: 0, g: 0, b: 0 }, opacity },
+            "color",
+            variable,
+          );
+          hit.paints = [newPaint];
+        }
+      } catch (error) {
+        console.error("Error binding variable to color style:", error);
+      }
+    } else {
+      // Use direct color values (existing logic)
+      let { h, s, l } = getHslFromStyle(selectedStyle);
+      let newHue =
+        hue == undefined
+          ? h
+          : Number(fillToLengthOfSelected(hue, selectedStyles)[idx]);
+      let newSaturation =
+        saturation == undefined
+          ? s
+          : Number(fillToLengthOfSelected(saturation, selectedStyles)[idx]);
+      let newLightness =
+        lightness == undefined
+          ? l
+          : Number(fillToLengthOfSelected(lightness, selectedStyles)[idx]);
+      let newColor;
+      if (hex) {
+        newColor = hexToFigmaRGB(
+          fillToLengthOfSelected(hex, selectedStyles)[idx],
+        );
+      } else {
+        newColor = convertToRgb({
+          h: newHue,
+          s: newSaturation,
+          l: newLightness,
+        });
+      }
+      let opacity = alpha
+        ? Number(fillToLengthOfSelected(alpha, selectedStyles)[idx])
+        : selectedStyle.paints[0].opacity;
+      hit.paints = [{ color: newColor, type: "SOLID", opacity }];
+    }
+
     if (styleMatch !== null && styleName !== undefined) {
       hit.name = hit.name.replace(styleMatch, styleName);
     } else if (styleName) {
       hit.name = styleName;
     }
-    if(description !== null) {
-      hit.description = description
+    if (description !== null) {
+      hit.description = description;
     }
     return hit;
-  });
-}
-
-function trackEvent(data) {
-  figma.ui.postMessage({
-    type: "trackEvent",
-    data,
   });
 }
 
@@ -279,18 +401,9 @@ async function removeStyles({ selectedStyles }) {
       }
     });
     figma.notify(`Successfully removed ${selectedStyles.length} styles`);
-    trackEvent([
-      {
-        event_type: "removed_style",
-        event_properties: { size: selectedStyles.length },
-      },
-    ]);
   } catch (e) {
     figma.notify("Encountered an error, full output in console");
     console.error(e);
-    trackEvent([
-      { event_type: "error", event_properties: { message: JSON.stringify(e) } },
-    ]);
   }
   getStyles();
 }
@@ -312,6 +425,9 @@ async function updateStyles({
   letterSpacing,
   fontMappings,
   variant,
+  useColorVariable,
+  colorVariableId,
+  variableBindings,
 }) {
   let styleChanges;
 
@@ -327,16 +443,12 @@ async function updateStyles({
         lightness,
         alpha,
         hex,
+        useColorVariable,
+        colorVariableId,
       });
       figma.notify(
-        `Successfully updated ${selectedStyles.length} color styles`
+        `Successfully updated ${selectedStyles.length} color styles`,
       );
-      trackEvent([
-        {
-          event_type: "changed_color_style",
-          event_properties: { size: selectedStyles.length },
-        },
-      ]);
     } else {
       styleChanges = updateTextStyles({
         selectedStyles,
@@ -349,28 +461,18 @@ async function updateStyles({
         lineHeight,
         letterSpacing,
         fontMappings,
+        variableBindings,
       });
       figma.notify(`Successfully updated ${selectedStyles.length} text styles`);
-      trackEvent([
-        {
-          event_type: "changed_text_style",
-          event_properties: { size: selectedStyles.length },
-        },
-      ]);
     }
 
     await Promise.all(styleChanges);
   } catch (e) {
     figma.notify("Encountered an error, full output in console");
     console.error(e);
-    trackEvent([
-      { event_type: "error", event_properties: { message: JSON.stringify(e) } },
-    ]);
   }
   getStyles();
 }
-
-trackEvent([{ event_type: "launched_plugin" }]);
 
 figma.ui.onmessage = (msg) => {
   if (msg.type === "update") {

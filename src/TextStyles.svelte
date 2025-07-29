@@ -24,6 +24,7 @@
   export let styles = [];
   export let availableFamilies = [];
   export let sendToUI;
+  export let variables = [];
   let styleFilter = "",
     currentFamily = {},
     availableFontNames = [],
@@ -40,7 +41,13 @@
     lineHeight,
     letterSpacing,
     weightsDialogVisible = false,
-    loading = true;
+    loading = true,
+    variableBindings = {},
+    useVariableForSize = false,
+    useVariableForLineHeight = false,
+    useVariableForLetterSpacing = false,
+    useVariableForWeight = false,
+    useVariableForFamily = false;
 
   $: disabled = !selectedStyles.length;
   $: {
@@ -61,6 +68,8 @@
       ? fontWeight.split(", ").every(e => availableWeights.includes(e))
       : true;
   }
+  $: floatVariables = variables && variables.length > 0 ? variables.filter(v => v.resolvedType === "FLOAT") : [];
+  $: stringVariables = variables && variables.length > 0 ? variables.filter(v => v.resolvedType === "STRING") : [];
 
   function showMissingWeightsDialog() {
     weightsDialogVisible = true;
@@ -98,22 +107,43 @@
     values.styleName = styleName;
     values.description = description;
 
-    if (originalFamilyNames !== familyName) {
+    // Handle variable bindings
+    let bindings = {};
+    if (useVariableForSize && variableBindings.fontSize) {
+      bindings.fontSize = variableBindings.fontSize;
+    }
+    if (useVariableForLineHeight && variableBindings.lineHeight) {
+      bindings.lineHeight = variableBindings.lineHeight;
+    }
+    if (useVariableForLetterSpacing && variableBindings.letterSpacing) {
+      bindings.letterSpacing = variableBindings.letterSpacing;
+    }
+    if (useVariableForWeight && variableBindings.fontWeight) {
+      bindings.fontWeight = variableBindings.fontWeight;
+    }
+    if (useVariableForFamily && variableBindings.fontFamily) {
+      bindings.fontFamily = variableBindings.fontFamily;
+    }
+    if (Object.keys(bindings).length > 0) {
+      values.variableBindings = bindings;
+    }
+
+    if (!useVariableForFamily && originalFamilyNames !== familyName) {
       values.familyName = familyName;
     }
-    if (originalFontWeights !== fontWeight) {
+    if (!useVariableForWeight && originalFontWeights !== fontWeight) {
       if (fontWeight.split(", ").length > 1) {
         values.fontMappings = newFontWeights;
       }
       values.fontWeight = fontWeight;
     }
-    if (originalFontSizes !== fontSize) {
+    if (!useVariableForSize && originalFontSizes !== fontSize) {
       values.fontSize = fontSize;
     }
-    if (originalLineHeights !== lineHeight) {
+    if (!useVariableForLineHeight && originalLineHeights !== lineHeight) {
       values.lineHeight = lineHeight;
     }
-    if (originalLetterSpacings !== letterSpacing) {
+    if (!useVariableForLetterSpacing && originalLetterSpacings !== letterSpacing) {
       values.letterSpacing = letterSpacing;
     }
 
@@ -269,18 +299,50 @@
 
     <fieldset {disabled}>
       <Label>Family</Label>
-      <AutoComplete
-        placeholder="Font family"
-        items={availableFontNames}
-        bind:selectedItem={familyName} />
+      <div class="flex flex-row align-center">
+        <AutoComplete
+          placeholder="Font family"
+          items={availableFontNames}
+          bind:selectedItem={familyName}
+          disabled={useVariableForFamily}
+          class="flex-grow" />
+        <Switch
+          bind:value={useVariableForFamily}
+          class="mr-xxsmall"
+        />
+      </div>
+      {#if useVariableForFamily}
+        <div class="ml-xxsmall mr-xxsmall mt-xsmall">
+          <select 
+            bind:value={variableBindings.fontFamily}
+            class="select-menu"
+            style="width: 100%; padding: 8px; border: 1px solid var(--silver); border-radius: 2px;"
+          >
+            <option value="">Select variable</option>
+            {#each stringVariables as variable}
+              <option value={variable.id}>
+                {variable.collectionName ? `${variable.collectionName} / ${variable.name}` : variable.name}
+              </option>
+            {/each}
+          </select>
+        </div>
+      {/if}
 
       <Label>Weight</Label>
       <div class="autocomplete-wrapper">
-        <AutoComplete
-          placeholder="Font weight"
-          items={availableWeights}
-          bind:selectedItem={fontWeight} />
-        {#if !hasAllWeightsAvailable && familyName.split(', ').length === 1}
+        <div class="flex flex-row align-center">
+          <AutoComplete
+            placeholder="Font weight"
+            items={availableWeights}
+            bind:selectedItem={fontWeight}
+            disabled={useVariableForWeight}
+            class="flex-grow" />
+          <Switch
+            bind:value={useVariableForWeight}
+            class="mr-xxsmall"
+          />
+        </div>
+        {#if !hasAllWeightsAvailable && familyName.split(', ').length === 1 && !useVariableForWeight}
           <div class="missing-button pr-xxsmall">
             <IconButton
               iconName={IconWarning}
@@ -288,30 +350,115 @@
           </div>
         {/if}
       </div>
+      {#if useVariableForWeight}
+        <div class="ml-xxsmall mr-xxsmall mt-xsmall">
+          <select 
+            bind:value={variableBindings.fontWeight}
+            class="select-menu"
+            style="width: 100%; padding: 8px; border: 1px solid var(--silver); border-radius: 2px;"
+          >
+            <option value="">Select variable</option>
+            {#each stringVariables as variable}
+              <option value={variable.id}>
+                {variable.collectionName ? `${variable.collectionName} / ${variable.name}` : variable.name}
+              </option>
+            {/each}
+          </select>
+        </div>
+      {/if}
       <div class="flex justify-content-between">
         <div class="flex-grow">
           <Label>Size</Label>
-          <Input
-            placeholder="Font Size"
-            class="ml-xxsmall mr-xxsmall"
-            name="size"
-            bind:value={fontSize} />
+          <div class="flex flex-row align-center">
+            <Input
+              placeholder="Font Size"
+              class="ml-xxsmall mr-xxsmall flex-grow"
+              name="size"
+              bind:value={fontSize}
+              disabled={useVariableForSize} />
+            <Switch
+              bind:value={useVariableForSize}
+              class="mr-xxsmall"
+            />
+          </div>
+          {#if useVariableForSize}
+            <div class="ml-xxsmall mr-xxsmall mt-xsmall">
+              <select 
+                bind:value={variableBindings.fontSize}
+                class="select-menu"
+                style="width: 100%; padding: 8px; border: 1px solid var(--silver); border-radius: 2px;"
+              >
+                <option value="">Select variable</option>
+                {#each floatVariables as variable}
+                  <option value={variable.id}>
+                    {variable.collectionName ? `${variable.collectionName} / ${variable.name}` : variable.name}
+                  </option>
+                {/each}
+              </select>
+            </div>
+          {/if}
         </div>
         <div class="flex-grow">
           <Label>Line height</Label>
-          <Input
-            placeholder="Line height"
-            class="ml-xxsmall mr-xxsmall"
-            name="lineheight"
-            bind:value={lineHeight} />
+          <div class="flex flex-row align-center">
+            <Input
+              placeholder="Line height"
+              class="ml-xxsmall mr-xxsmall flex-grow"
+              name="lineheight"
+              bind:value={lineHeight}
+              disabled={useVariableForLineHeight} />
+            <Switch
+              bind:value={useVariableForLineHeight}
+              class="mr-xxsmall"
+            />
+          </div>
+          {#if useVariableForLineHeight}
+            <div class="ml-xxsmall mr-xxsmall mt-xsmall">
+              <select 
+                bind:value={variableBindings.lineHeight}
+                class="select-menu"
+                style="width: 100%; padding: 8px; border: 1px solid var(--silver); border-radius: 2px;"
+              >
+                <option value="">Select variable</option>
+                {#each floatVariables as variable}
+                  <option value={variable.id}>
+                    {variable.collectionName ? `${variable.collectionName} / ${variable.name}` : variable.name}
+                  </option>
+                {/each}
+              </select>
+            </div>
+          {/if}
         </div>
         <div class="flex-grow">
           <Label>Letter Spacing</Label>
-          <Input
-            placeholder="% or px"
-            class="ml-xxsmall mr-xxsmall"
-            name="letterspacing"
-            bind:value={letterSpacing} />
+          <div class="flex flex-row align-center">
+            <Input
+              placeholder="% or px"
+              class="ml-xxsmall mr-xxsmall flex-grow"
+              name="letterspacing"
+              bind:value={letterSpacing}
+              disabled={useVariableForLetterSpacing} />
+            <Switch
+              bind:value={useVariableForLetterSpacing}
+              class="mr-xxsmall"
+            />
+          </div>
+          {#if useVariableForLetterSpacing}
+            <div class="ml-xxsmall mr-xxsmall mt-xsmall">
+              <select 
+                bind:value={variableBindings.letterSpacing}
+                class="select-menu"
+                style="width: 100%; padding: 8px; border: 1px solid var(--silver); border-radius: 2px;"
+              >
+                <option value="">Select variable</option>
+                {#each floatVariables as variable}
+                  <option value={variable.id}>
+                    {variable.collectionName ? `${variable.collectionName} / ${variable.name}` : variable.name}
+                  </option>
+                {/each}
+              </select>
+            </div>
+          {/if}
         </div>
       </div>
 

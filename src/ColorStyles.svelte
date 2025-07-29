@@ -1,7 +1,7 @@
 <script>
   import Selector from "./Selector.svelte";
   import Input from "./Input.svelte";
-  import Hue from "svelte-color/Hue.svelte";
+  import Hue from "./HueFixed.svelte";
   import { rgbToHsl, figmaRGBToHex } from "./color-helpers.js";
   import {
     Button,
@@ -17,6 +17,7 @@
 
   export let styles = [];
   export let sendToUI;
+  export let variables = [];
 
   let styleFilter = "",
     selectedStyles = [],
@@ -31,9 +32,12 @@
     color,
     styleName = "",
     description = "",
-    styleMatch;
+    styleMatch,
+    useColorVariable = false,
+    colorVariableId = "";
 
   $: disabled = !selectedStyles.length;
+  $: colorVariables = variables.filter(v => v.resolvedType === "COLOR");
 
   function remove() {
     sendToUI({
@@ -45,28 +49,36 @@
   }
 
   function update() {
-    let originalHue = getHue(selectedStyles);
-    let originalSaturation = getSaturation(selectedStyles);
-    let originalLightness = getLightness(selectedStyles);
-    let originalAlpha = getAlpha(selectedStyles);
-    let originalHex = getHex(selectedStyles);
     let values = {};
     values.selectedStyles = selectedStyles;
-    if (originalHue !== hue) {
-      values.hue = hue;
+    
+    if (useColorVariable) {
+      values.useColorVariable = true;
+      values.colorVariableId = colorVariableId;
+    } else {
+      let originalHue = getHue(selectedStyles);
+      let originalSaturation = getSaturation(selectedStyles);
+      let originalLightness = getLightness(selectedStyles);
+      let originalAlpha = getAlpha(selectedStyles);
+      let originalHex = getHex(selectedStyles);
+      
+      if (originalHue !== hue) {
+        values.hue = hue;
+      }
+      if (originalSaturation !== saturation) {
+        values.saturation = saturation;
+      }
+      if (originalLightness !== lightness) {
+        values.lightness = lightness;
+      }
+      if (originalAlpha !== alpha) {
+        values.alpha = alpha;
+      }
+      if (originalHex !== hex) {
+        values.hex = hex;
+      }
     }
-    if (originalSaturation !== saturation) {
-      values.saturation = saturation;
-    }
-    if (originalLightness !== lightness) {
-      values.lightness = lightness;
-    }
-    if (originalAlpha !== alpha) {
-      values.alpha = alpha;
-    }
-    if (originalHex !== hex) {
-      values.hex = hex;
-    }
+    
     values.description = description;
     values.styleMatch = styleMatch;
     values.styleName = styleName;
@@ -160,59 +172,80 @@
   <form on:submit={(e) => e.preventDefault()}>
     <fieldset {disabled}>
       <div class="ml-xxsmall mr-xxsmall mb-xxsmall mt-xsmall">
-        <Hue
-          class="hue-wrapper {disabled ? 'disabled' : ''}"
-          bind:h={hue}
-          on:input={handleInput}
+        <Switch
+          bind:value={useColorVariable}
+          label="Use Variable"
         />
       </div>
-      <div class="flex justify-content-between">
+      
+      {#if useColorVariable}
+        <div class="ml-xxsmall mr-xxsmall mb-xxsmall">
+          <Label>Color Variable</Label>
+          <SelectMenu
+            bind:value={colorVariableId}
+            placeholder="Select a color variable"
+            options={colorVariables}
+            itemLabel="name"
+            itemValue="id"
+            showChevron
+          />
+        </div>
+      {:else}
+        <div class="ml-xxsmall mr-xxsmall mb-xxsmall mt-xsmall">
+          <Hue
+            class="hue-wrapper {disabled ? 'disabled' : ''}"
+            bind:h={hue}
+            on:input={handleInput}
+          />
+        </div>
+        <div class="flex justify-content-between">
+          <div class="flex-grow">
+            <Label>Hue</Label>
+            <Input
+              placeholder="Hue"
+              class="ml-xxsmall mr-xxsmall"
+              name="hue"
+              bind:value={hue}
+            />
+          </div>
+          <div class="flex-grow">
+            <Label>Saturation</Label>
+            <Input
+              placeholder="Saturation"
+              class="ml-xxsmall mr-xxsmall"
+              name="saturation"
+              bind:value={saturation}
+            />
+          </div>
+          <div class="flex-grow">
+            <Label>Lightness</Label>
+            <Input
+              placeholder="Lightness"
+              class="ml-xxsmall mr-xxsmall"
+              name="lightness"
+              bind:value={lightness}
+            />
+          </div>
+          <div class="flex-grow">
+            <Label>Alpha</Label>
+            <Input
+              placeholder="Alpha"
+              class="ml-xxsmall mr-xxsmall"
+              name="alpha"
+              bind:value={alpha}
+            />
+          </div>
+        </div>
         <div class="flex-grow">
-          <Label>Hue</Label>
+          <Label>Hex</Label>
           <Input
-            placeholder="Hue"
+            placeholder="Hex"
             class="ml-xxsmall mr-xxsmall"
             name="hue"
-            bind:value={hue}
+            bind:value={hex}
           />
         </div>
-        <div class="flex-grow">
-          <Label>Saturation</Label>
-          <Input
-            placeholder="Saturation"
-            class="ml-xxsmall mr-xxsmall"
-            name="saturation"
-            bind:value={saturation}
-          />
-        </div>
-        <div class="flex-grow">
-          <Label>Lightness</Label>
-          <Input
-            placeholder="Lightness"
-            class="ml-xxsmall mr-xxsmall"
-            name="lightness"
-            bind:value={lightness}
-          />
-        </div>
-        <div class="flex-grow">
-          <Label>Alpha</Label>
-          <Input
-            placeholder="Alpha"
-            class="ml-xxsmall mr-xxsmall"
-            name="alpha"
-            bind:value={alpha}
-          />
-        </div>
-      </div>
-      <div class="flex-grow">
-        <Label>Hex</Label>
-        <Input
-          placeholder="Hex"
-          class="ml-xxsmall mr-xxsmall"
-          name="hue"
-          bind:value={hex}
-        />
-      </div>
+      {/if}
 
       <Label>Name</Label>
       <div class="flex flex-row flex-between space-x-2">

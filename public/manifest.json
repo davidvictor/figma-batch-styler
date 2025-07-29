@@ -1,7 +1,8 @@
 {
-  "name": "Batch Styler",
+  "name": "Metamodern Batch Styler",
   "id": "818203235789864127",
   "api": "1.0.0",
   "main": "code.js",
-  "ui": "index.html"
+  "ui": "index.html",
+  "editorType": ["figma"]
 }
