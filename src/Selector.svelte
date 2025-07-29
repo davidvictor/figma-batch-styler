@@ -20,13 +20,16 @@
   export let setSelectedStyles;
   export let sendToUI;
   export let type;
+  export let selectedStyles = [];
   let filteredStyles = [];
+  let selectedStyleIds = [];
 
   $: filteredStyles = styles.filter(style => {
     var regex = new RegExp(styleFilter, "gi");
     return style.name.match(regex);
   });
   $: size = filteredStyles.length > 7 ? 7 : filteredStyles.length;
+  $: selectedStyleIds = selectedStyles ? selectedStyles.map(s => s.id) : [];
 
   function refresh() {
     sendToUI({
@@ -35,9 +38,9 @@
   }
 
   function setSelected(e) {
-    setSelectedStyles(
-      Array.from(e.target.selectedOptions, n => JSON.parse(n.value))
-    );
+    const selected = Array.from(e.target.selectedOptions, n => JSON.parse(n.value));
+    selectedStyleIds = selected.map(s => s.id);
+    setSelectedStyles(selected);
   }
 
   function getColorClass(color) {
@@ -128,11 +131,11 @@
       multiple
       class="type-wrapper"
       {size}
-      value={filteredStyles}
       on:change={setSelected}>
       {#each filteredStyles as style}
         <option
           value={JSON.stringify(style)}
+          selected={selectedStyleIds.includes(style.id)}
           style={getColorStyle(style.color)}
           class="{getColorClass(style.color)} flex type-item pt-xxsmall
           pb-xxsmall pl-xxsmall pr-xxsmall">

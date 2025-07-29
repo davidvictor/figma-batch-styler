@@ -42,7 +42,7 @@ async function sendStyles({ figmaTextStyles = [], figmaColorStyles = [] }) {
     })
     .filter((n) => n);
   let textStyles = figmaTextStyles.map((s) => {
-    const { name, description, fontName, fontSize, id } = s;
+    const { name, description, fontName, fontSize, id, boundVariables } = s;
     let lineHeight;
     if (s.lineHeight.unit === "AUTO") {
       lineHeight = "AUTO";
@@ -59,6 +59,27 @@ async function sendStyles({ figmaTextStyles = [], figmaColorStyles = [] }) {
     } else {
       letterSpacing = Math.round(s.letterSpacing.value * 100) / 100;
     }
+    
+    // Extract bound variable IDs for each property
+    const boundVariableIds = {};
+    if (boundVariables) {
+      if (boundVariables.fontSize && boundVariables.fontSize.length > 0) {
+        boundVariableIds.fontSize = boundVariables.fontSize[0].id;
+      }
+      if (boundVariables.lineHeight && boundVariables.lineHeight.length > 0) {
+        boundVariableIds.lineHeight = boundVariables.lineHeight[0].id;
+      }
+      if (boundVariables.letterSpacing && boundVariables.letterSpacing.length > 0) {
+        boundVariableIds.letterSpacing = boundVariables.letterSpacing[0].id;
+      }
+      if (boundVariables.fontWeight && boundVariables.fontWeight.length > 0) {
+        boundVariableIds.fontWeight = boundVariables.fontWeight[0].id;
+      }
+      if (boundVariables.fontFamily && boundVariables.fontFamily.length > 0) {
+        boundVariableIds.fontFamily = boundVariables.fontFamily[0].id;
+      }
+    }
+    
     return {
       name,
       description,
@@ -67,6 +88,7 @@ async function sendStyles({ figmaTextStyles = [], figmaColorStyles = [] }) {
       lineHeight,
       letterSpacing,
       id,
+      boundVariableIds,
     };
   });
 
@@ -126,11 +148,22 @@ async function updateTextStyles({
   fontMappings,
   variableBindings,
 }) {
-  let localStyles = figma.getLocalTextStyles();
-
+  // Only operate on the styles that were explicitly selected
+  // This prevents any leakage to unselected styles
   return selectedStyles.map(async (selectedStyle, idx) => {
-    let hit = localStyles.find((s) => s.id === selectedStyle.id);
+    // Get the specific style by ID - this ensures we only modify what was selected
+    let hit = figma.getLocalTextStyles().find((s) => s.id === selectedStyle.id);
+    
+    // Safety check - if style not found, skip it
+    if (!hit) {
+      console.warn(`Style with id ${selectedStyle.id} not found`);
+      return null;
+    }
 
+    // First, preserve existing variable bindings if not explicitly being changed
+    const existingBindings = hit.boundVariables || {};
+    const fieldsToPreserve = ['fontSize', 'lineHeight', 'letterSpacing', 'fontWeight', 'fontFamily'];
+    
     // Handle variable bindings
     if (variableBindings) {
       for (const [field, variableId] of Object.entries(variableBindings)) {
@@ -151,9 +184,32 @@ async function updateTextStyles({
           } catch (error) {
             console.error(`Error binding variable to ${field}:`, error);
           }
+        } else if (variableId === null) {
+          // Explicitly remove binding if variableId is null
+          hit.setBoundVariable(field, null);
         }
       }
     }
+    
+    // For fields that weren't in variableBindings, preserve existing bindings
+    // unless they're being explicitly set to static values
+    fieldsToPreserve.forEach(field => {
+      if (!variableBindings || !(field in variableBindings)) {
+        // Check if this field has an existing binding and we're not setting a static value
+        if (existingBindings[field] && existingBindings[field].length > 0) {
+          const shouldPreserve = 
+            (field === 'fontSize' && !fontSize) ||
+            (field === 'lineHeight' && !lineHeight) ||
+            (field === 'letterSpacing' && !letterSpacing) ||
+            (field === 'fontWeight' && !fontWeight) ||
+            (field === 'fontFamily' && !familyName);
+          
+          if (shouldPreserve) {
+            // Keep the existing binding - no action needed
+          }
+        }
+      }
+    });
 
     // Handle direct values (existing logic)
     let newLineHeight;
@@ -200,9 +256,15 @@ async function updateTextStyles({
 
     await figma.loadFontAsync({ family, style });
 
-    if (styleMatch !== null && styleName !== undefined) {
-      hit.name = hit.name.replace(styleMatch, styleName);
+    // Handle name changes - only for this specific style
+    if (styleMatch !== null && styleMatch !== '' && styleName !== undefined) {
+      // Use a more controlled replacement to avoid accidental matches
+      // Only replace if the pattern actually exists in THIS style's name
+      if (hit.name.includes(styleMatch)) {
+        hit.name = hit.name.replace(styleMatch, styleName);
+      }
     } else if (styleName) {
+      // Complete name replacement
       hit.name = styleName;
     }
     if (description !== null) {
@@ -376,9 +438,15 @@ async function updateColorStyles({
       hit.paints = [{ color: newColor, type: "SOLID", opacity }];
     }
 
-    if (styleMatch !== null && styleName !== undefined) {
-      hit.name = hit.name.replace(styleMatch, styleName);
+    // Handle name changes - only for this specific style
+    if (styleMatch !== null && styleMatch !== '' && styleName !== undefined) {
+      // Use a more controlled replacement to avoid accidental matches
+      // Only replace if the pattern actually exists in THIS style's name
+      if (hit.name.includes(styleMatch)) {
+        hit.name = hit.name.replace(styleMatch, styleName);
+      }
     } else if (styleName) {
+      // Complete name replacement
       hit.name = styleName;
     }
     if (description !== null) {
@@ -466,7 +534,14 @@ async function updateStyles({
       figma.notify(`Successfully updated ${selectedStyles.length} text styles`);
     }
 
-    await Promise.all(styleChanges);
+    // Filter out any null results from styles that weren't found
+    const validChanges = await Promise.all(styleChanges);
+    const successfulChanges = validChanges.filter(result => result !== null);
+    
+    // Log if any styles were skipped
+    if (successfulChanges.length < styleChanges.length) {
+      console.warn(`${styleChanges.length - successfulChanges.length} styles were not found and skipped`);
+    }
   } catch (e) {
     figma.notify("Encountered an error, full output in console");
     console.error(e);
